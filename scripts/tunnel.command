@@ -14,7 +14,9 @@ echo ''
 echo '   브라우저:  http://localhost:8765'
 echo '────────────────────────────────────────────'
 echo ''
-ssh -N -L 8765:localhost:8765 \
+# 로봇 쪽 목적지를 127.0.0.1 로 못박는다. 'localhost' 로 두면 로봇에서
+# ::1 로 먼저 해석되는데, 관리자 화면은 IPv4 에만 바인딩돼 있어 거부된다.
+ssh -N -L 8765:127.0.0.1:8765 \
   -o ConnectTimeout=15 -o ConnectionAttempts=5 \
   -o StrictHostKeyChecking=accept-new -o ExitOnForwardFailure=yes \
   -o ServerAliveInterval=30 -o ServerAliveCountMax=3 \
