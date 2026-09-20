@@ -19,3 +19,6 @@ venv/
 
 # macOS
 .DS_Store
+
+# 비서 런타임 데이터 (키·얼굴 임베딩·상태)
+*.local.json

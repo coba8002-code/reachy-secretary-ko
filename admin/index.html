@@ -1,0 +1,192 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Reachy 비서 관리자</title>
+<style>
+  :root {
+    --bg: #f6f6f4; --card: #fff; --line: #e3e3de; --text: #1c1c1a;
+    --muted: #6b6b64; --accent: #b4552d; --ok: #2f7a4d; --err: #b3261e;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #1a1a18; --card: #242422; --line: #35352f; --text: #eceae4;
+      --muted: #9b9b92; --accent: #e08a5f; --ok: #6cc38b; --err: #f2897f;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font: 15px/1.6 -apple-system, BlinkMacSystemFont, "Apple SD Gothic Neo", sans-serif;
+    padding: 32px 16px 64px;
+  }
+  .wrap { max-width: 760px; margin: 0 auto; }
+  h1 { font-size: 22px; margin: 0 0 4px; }
+  .sub { color: var(--muted); font-size: 13px; margin-bottom: 28px; }
+  section { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 20px; margin-bottom: 18px; }
+  h2 { font-size: 15px; margin: 0 0 14px; letter-spacing: -0.01em; }
+  .prov { border: 1px solid var(--line); border-radius: 9px; padding: 14px; margin-bottom: 10px; }
+  .prov.sel { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent) inset; }
+  .prow { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+  .pname { font-weight: 600; }
+  .badge { font-size: 11px; padding: 2px 7px; border-radius: 99px; border: 1px solid var(--line); color: var(--muted); }
+  .badge.ok { color: var(--ok); border-color: var(--ok); }
+  .note { color: var(--muted); font-size: 12.5px; margin: 8px 0 0; }
+  .keyrow { display: flex; gap: 8px; margin-top: 10px; }
+  input[type=password], input[type=text], select {
+    flex: 1; min-width: 0; padding: 8px 10px; border: 1px solid var(--line);
+    border-radius: 7px; background: var(--bg); color: var(--text); font: inherit; font-size: 13.5px;
+  }
+  button {
+    padding: 8px 13px; border: 1px solid var(--line); border-radius: 7px;
+    background: var(--bg); color: var(--text); font: inherit; font-size: 13px; cursor: pointer;
+  }
+  button:hover { border-color: var(--accent); }
+  button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+  .field { display: flex; align-items: center; gap: 12px; margin-bottom: 12px; }
+  .field label { width: 130px; flex: none; color: var(--muted); font-size: 13.5px; }
+  .result { font-size: 12.5px; margin-top: 8px; }
+  .result.ok { color: var(--ok); } .result.err { color: var(--err); }
+  .hint { color: var(--muted); font-size: 12px; margin-top: 14px; padding-top: 14px; border-top: 1px solid var(--line); }
+  #toast { position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%);
+    background: var(--text); color: var(--bg); padding: 9px 16px; border-radius: 8px;
+    font-size: 13px; opacity: 0; transition: opacity .2s; pointer-events: none; }
+  #toast.show { opacity: 1; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Reachy 비서 관리자</h1>
+  <div class="sub">두뇌와 키, 동작 방식을 여기서 설정합니다. 키는 이 기기에만 저장됩니다.</div>
+
+  <section>
+    <h2>두뇌 선택</h2>
+    <div id="providers"></div>
+    <div class="hint">
+      키는 <code id="cfgpath">설정 파일</code> 에 소유자만 읽을 수 있는 권한(0600)으로 저장되며,
+      해당 제공자 외에는 어디로도 전송되지 않습니다. 화면에는 항상 가려서 표시됩니다.
+    </div>
+  </section>
+
+  <section>
+    <h2>비서 설정</h2>
+    <div class="field"><label>주인 이름</label><input type="text" id="owner_name" placeholder="얼굴 인식에 쓸 이름"></div>
+    <div class="field"><label>목소리</label>
+      <select id="voice">
+        <option>Yuna</option><option>Sandy</option><option>Shelley</option>
+        <option>Flo</option><option>Eddy</option><option>Reed</option>
+      </select>
+    </div>
+    <div class="field"><label>음성 출력</label>
+      <select id="output"><option value="robot">로봇 스피커</option><option value="mac">이 기기</option></select>
+    </div>
+    <div class="field"><label>음성 인식 모델</label>
+      <select id="stt_model">
+        <option value="tiny">tiny — 가장 빠름</option>
+        <option value="base">base — 균형</option>
+        <option value="small">small — 정확</option>
+      </select>
+    </div>
+    <div class="field"><label>얼굴 인식</label>
+      <select id="vision_enabled"><option value="false">끔</option><option value="true">켬</option></select>
+    </div>
+    <button class="primary" onclick="saveSettings()">저장</button>
+  </section>
+</div>
+<div id="toast"></div>
+
+<script>
+let state = null;
+
+function toast(msg) {
+  const t = document.getElementById('toast');
+  t.textContent = msg; t.classList.add('show');
+  setTimeout(() => t.classList.remove('show'), 1800);
+}
+
+async function load() {
+  const r = await fetch('/api/settings');
+  state = await r.json();
+  renderProviders();
+  for (const k of ['owner_name','voice','output','stt_model']) {
+    const el = document.getElementById(k);
+    if (el && state.settings[k] != null) el.value = state.settings[k];
+  }
+  document.getElementById('vision_enabled').value = String(!!state.settings.vision_enabled);
+}
+
+function renderProviders() {
+  const box = document.getElementById('providers');
+  box.innerHTML = '';
+  for (const p of state.providers) {
+    const div = document.createElement('div');
+    div.className = 'prov' + (p.selected ? ' sel' : '');
+    const badge = p.ready
+      ? `<span class="badge ok">사용 가능</span>`
+      : `<span class="badge">키 필요</span>`;
+    div.innerHTML = `
+      <div class="prow">
+        <span class="pname">${p.label}</span>${badge}
+        <span class="badge">${p.model}</span>
+        <span style="flex:1"></span>
+        ${p.selected ? '<span class="badge ok">선택됨</span>'
+                     : `<button onclick="select('${p.id}')">이걸로</button>`}
+        <button onclick="test('${p.id}', this)">연결 확인</button>
+      </div>
+      <p class="note">${p.note}</p>
+      ${p.needs_key ? `
+      <div class="keyrow">
+        <input type="password" id="key_${p.id}" placeholder="${p.masked_key || 'API 키 입력'}">
+        <button onclick="saveKey('${p.id}')">키 저장</button>
+      </div>` : ''}
+      <div class="result" id="res_${p.id}"></div>`;
+    box.appendChild(div);
+  }
+}
+
+async function select(id) {
+  await fetch('/api/settings', {method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({provider: id, model: ''})});
+  await load(); toast('두뇌를 바꿨습니다');
+}
+
+async function saveKey(id) {
+  const input = document.getElementById('key_' + id);
+  const key = input.value.trim();
+  if (!key) { toast('키를 입력해 주세요'); return; }
+  await fetch('/api/key', {method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({provider: id, key})});
+  input.value = '';
+  await load(); toast('키를 저장했습니다');
+}
+
+async function test(id, btn) {
+  const out = document.getElementById('res_' + id);
+  btn.disabled = true; out.className = 'result'; out.textContent = '확인 중...';
+  try {
+    const r = await fetch('/api/test', {method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({provider: id})});
+    const d = await r.json();
+    out.className = 'result ' + (d.ok ? 'ok' : 'err');
+    out.textContent = (d.ok ? '✓ ' : '✕ ') + d.detail;
+  } finally { btn.disabled = false; }
+}
+
+async function saveSettings() {
+  const body = {
+    owner_name: document.getElementById('owner_name').value.trim(),
+    voice: document.getElementById('voice').value,
+    output: document.getElementById('output').value,
+    stt_model: document.getElementById('stt_model').value,
+    vision_enabled: document.getElementById('vision_enabled').value === 'true',
+  };
+  await fetch('/api/settings', {method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify(body)});
+  toast('저장했습니다');
+}
+
+load();
+</script>
+</body>
+</html>
