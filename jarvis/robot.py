@@ -133,6 +133,52 @@ def play_emotion(name: str) -> None:
     _request("POST", f"/api/move/play/recorded-move-dataset/{dataset}/{urllib.parse.quote(name)}")
 
 
+def list_moves() -> list[str]:
+    """Return every recorded move the robot can play."""
+    dataset = urllib.parse.quote(EMOTION_DATASET, safe="")
+    payload = json.loads(_request("GET", f"/api/move/recorded-move-datasets/list/{dataset}"))
+    if isinstance(payload, list):
+        return [m for m in payload if isinstance(m, str)]
+    return []
+
+
+def running_moves() -> list[str]:
+    """Return the ids of the moves playing right now."""
+    try:
+        payload = json.loads(_request("GET", "/api/move/running"))
+    except (RobotError, json.JSONDecodeError):
+        return []
+    if not isinstance(payload, list):
+        return []
+    return [m["uuid"] for m in payload if isinstance(m, dict) and m.get("uuid")]
+
+
+def stop_move() -> int:
+    """Stop every move that is playing. Returns how many were stopped.
+
+    The daemon stops one move at a time, by id - there is no "stop everything"
+    route - so a move started before this process began still gets stopped.
+    """
+    stopped = 0
+    for uuid in running_moves():
+        try:
+            _request(
+                "POST",
+                "/api/move/stop",
+                data=json.dumps({"uuid": uuid}).encode(),
+                headers={"Content-Type": "application/json"},
+            )
+            stopped += 1
+        except RobotError:
+            continue
+    return stopped
+
+
+def is_moving() -> bool:
+    """Return True while a move is still playing."""
+    return bool(running_moves())
+
+
 def is_awake() -> bool:
     """Return True when the daemon answers and its backend is ready."""
     try:

@@ -20,6 +20,7 @@ from __future__ import annotations
 import sys
 import time
 import wave
+from typing import Any
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -30,12 +31,18 @@ import config  # noqa: E402
 import llm  # noqa: E402
 import robot  # noqa: E402
 import speech  # noqa: E402
+import tools as toolkit  # noqa: E402
 
 PROFILE = ROOT / "profiles" / "secretary_ko" / "profile.md"
 
 # Long enough that the robot does not forget what was just said, short enough
 # that a session does not slowly turn into a bill.
 MAX_TURNS = 20
+
+# A tool can lead to another tool - look, then speak about what you saw - but a
+# model that keeps calling tools without ever answering has gone wrong, and the
+# user is sitting in silence while it does.
+MAX_TOOL_ROUNDS = 4
 
 
 def persona() -> str:
@@ -70,6 +77,96 @@ def speak(line: str) -> None:
     time.sleep(seconds + 0.15)
 
 
+def _call_part(call: dict) -> dict:
+    """Rebuild the model's own functionCall part, signature and all."""
+    part: dict = {"functionCall": {"name": call["name"], "args": call["args"]}}
+    if call.get("signature"):
+        part["thoughtSignature"] = call["signature"]
+    return part
+
+
+def respond(
+    history: list[dict], system: str, declarations: list[dict],
+    registry: dict[str, Any], started: float,
+) -> list[str]:
+    """Run one turn, calling tools as the model asks, and speak what comes back.
+
+    Returns the sentences that were spoken, for the history.
+    """
+    spoken: list[str] = []
+    buffer = ""
+
+    for _round in range(MAX_TOOL_ROUNDS):
+        calls: list[dict] = []
+        said_this_round: list[str] = []
+
+        for event in llm.stream_events(history, system=system, role="chat", tools=declarations or None):
+            if "tool_call" in event:
+                calls.append(event["tool_call"])
+                continue
+
+            # Speak by sentence so the robot starts talking before the answer ends.
+            buffer += event.get("text", "")
+            while True:
+                sentence, buffer = llm.take_sentence(buffer)
+                if not sentence:
+                    break
+                if sentence:
+                    if not spoken:
+                        print(f"[{time.time() - started:.1f}초] ", end="", flush=True)
+                    print(sentence, end=" ", flush=True)
+                    spoken.append(sentence)
+                    said_this_round.append(sentence)
+                    speak(sentence)
+
+        if not calls:
+            break
+
+        # Whatever it said before reaching for a tool still has to be heard.
+        if buffer.strip():
+            sentence = buffer.strip()
+            buffer = ""
+            if not spoken:
+                print(f"[{time.time() - started:.1f}초] ", end="", flush=True)
+            print(sentence, end=" ", flush=True)
+            spoken.append(sentence)
+            said_this_round.append(sentence)
+            speak(sentence)
+
+        history.append({
+            "role": "assistant",
+            "parts": (
+                ([{"text": " ".join(said_this_round)}] if said_this_round else [])
+                + [_call_part(c) for c in calls]
+            ),
+        })
+
+        responses = []
+        for call in calls:
+            tool = registry.get(call["name"])
+            print(f"\n    [{call['name']}] ", end="", flush=True)
+            if tool is None:
+                result = {"error": f"그런 기능은 없습니다: {call['name']}"}
+            else:
+                try:
+                    result = tool.run(**call["args"])
+                except Exception as exc:  # noqa: BLE001 - a broken tool must not end the turn
+                    result = {"error": f"{type(exc).__name__}: {exc}"}
+            print(str(result)[:90], flush=True)
+            responses.append({"functionResponse": {"name": call["name"], "response": result}})
+
+        history.append({"role": "user", "parts": responses})
+        print("    ", end="", flush=True)
+
+    if buffer.strip():
+        sentence = buffer.strip()
+        print(sentence, end=" ", flush=True)
+        spoken.append(sentence)
+        speak(sentence)
+
+    return spoken
+
+
 def main() -> int:
     """Run the conversation loop until the user quits."""
     provider = config.provider_for_role("chat")
@@ -82,6 +179,13 @@ def main() -> int:
     except robot.RobotError:
         awake = False
     print(f"로봇       : {'연결됨' if awake else '연결 안 됨 - 소리가 나지 않습니다'}")
+    # Built once: listing the robot's moves is a round trip, and the set does not
+    # change while a conversation is running.
+    available = toolkit.build()
+    registry = {t.name: t for t in available}
+    declarations = [t.declaration() for t in available]
+
+    print(f"할 수 있는 것: {', '.join(registry) or '(없음)'}")
     print("\n무엇이든 말씀하세요. 끝내려면 그냥 엔터, 또는 '그만'.\n")
 
     system = persona()
@@ -101,21 +205,16 @@ def main() -> int:
 
         print("로봇 > ", end="", flush=True)
         started = time.time()
-        spoken: list[str] = []
         try:
-            for sentence in llm.stream_sentences(history, system=system, role="chat"):
-                if not spoken:
-                    print(f"[{time.time() - started:.1f}초] ", end="", flush=True)
-                print(sentence.strip(), end=" ", flush=True)
-                spoken.append(sentence.strip())
-                speak(sentence)
+            spoken = respond(history, system, declarations, registry, started)
         except llm.LLMError as exc:
             print(f"\n    실패: {exc}")
             history.pop()
             continue
-        print("\n")
+        print()
 
-        history.append({"role": "assistant", "content": " ".join(spoken)})
+        if spoken:
+            history.append({"role": "assistant", "content": " ".join(spoken)})
 
     print("대화를 마칩니다.")
     return 0

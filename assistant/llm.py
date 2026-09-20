@@ -146,7 +146,7 @@ def _post_stream(
 
 def _ollama(
     messages: list[dict], model: str, system: str, read_timeout: float, schema: dict | None = None
-) -> Iterator[str]:
+) -> Iterator[dict]:
     base = config.PROVIDERS["local"]["base_url"]
     payload: dict = {
         "model": model,
@@ -165,13 +165,13 @@ def _ollama(
             continue
         piece = chunk.get("message", {}).get("content", "")
         if piece:
-            yield piece
+            yield {"text": piece}
 
 
 def _openai_compatible(
     messages: list[dict], model: str, system: str, base: str, key: str, read_timeout: float,
     schema: dict | None = None,
-) -> Iterator[str]:
+) -> Iterator[dict]:
     payload: dict = {
         "model": model,
         "messages": ([{"role": "system", "content": system}] if system else []) + messages,
@@ -198,12 +198,12 @@ def _openai_compatible(
         for choice in chunk.get("choices", []):
             piece = choice.get("delta", {}).get("content")
             if piece:
-                yield piece
+                yield {"text": piece}
 
 
 def _anthropic(
     messages: list[dict], model: str, system: str, key: str, think: bool, read_timeout: float
-) -> Iterator[str]:
+) -> Iterator[dict]:
     payload: dict = {
         "model": model,
         "max_tokens": 2000,
@@ -229,7 +229,7 @@ def _anthropic(
         if event.get("type") == "content_block_delta":
             piece = event.get("delta", {}).get("text")
             if piece:
-                yield piece
+                yield {"text": piece}
 
 
 # Gemini accepts a subset of JSON Schema and rejects the request outright when it
@@ -262,9 +262,16 @@ def _gemini_schema(node: Any) -> Any:
 def _gemini(
     messages: list[dict], model: str, system: str, key: str, think: bool, read_timeout: float,
     schema: dict | None = None,
-) -> Iterator[str]:
+    tools: list[dict] | None = None,
+) -> Iterator[dict]:
+    # A message normally carries plain text, but a tool round trip needs richer
+    # parts - the model's functionCall and our functionResponse - so a caller may
+    # supply "parts" directly instead.
     contents = [
-        {"role": "model" if m["role"] == "assistant" else "user", "parts": [{"text": m["content"]}]}
+        {
+            "role": "model" if m["role"] == "assistant" else "user",
+            "parts": m["parts"] if "parts" in m else [{"text": m["content"]}],
+        }
         for m in messages
     ]
     payload: dict = {"contents": contents}
@@ -279,6 +286,8 @@ def _gemini(
         generation["responseSchema"] = _gemini_schema(schema)
     if generation:
         payload["generationConfig"] = generation
+    if tools:
+        payload["tools"] = [{"functionDeclarations": tools}]
 
     # The key goes in a header, never in the query string: URLs end up in logs,
     # in exception text, and in anything that reports a failed request.
@@ -296,14 +305,24 @@ def _gemini(
             continue
         for cand in event.get("candidates", []):
             for part in cand.get("content", {}).get("parts", []):
-                piece = part.get("text")
-                if piece:
-                    yield piece
+                if part.get("text"):
+                    yield {"text": part["text"]}
+                call = part.get("functionCall")
+                if call:
+                    # Gemini 3 signs each call and rejects the follow-up turn if
+                    # the signature does not come back with it, so carry it along
+                    # rather than reconstructing the part from name and args.
+                    yield {"tool_call": {
+                        "name": call.get("name", ""),
+                        "args": call.get("args") or {},
+                        "signature": part.get("thoughtSignature"),
+                    }}
 
 
-def stream_tokens(
-    messages: list[dict], *, system: str = "", role: str = "chat", schema: dict | None = None
-) -> Iterator[str]:
+def stream_events(
+    messages: list[dict], *, system: str = "", role: str = "chat",
+    schema: dict | None = None, tools: list[dict] | None = None,
+) -> Iterator[dict]:
     """Stream the reply from the provider assigned to this role.
 
     Roles let one robot use different providers for different jobs - a cheap fast
@@ -323,6 +342,11 @@ def stream_tokens(
     think = role in THINKING_ROLES
     read_timeout = READ_TIMEOUT_CHAT if role == "chat" else READ_TIMEOUT
 
+    if tools and provider != "gemini":
+        # Better to say so than to drop the tools and let the robot explain why
+        # it cannot dance while the tool sat there unused.
+        raise LLMError(f"{spec['label']} 에는 아직 도구 호출이 연결되어 있지 않습니다.")
+
     if provider == "local":
         yield from _ollama(messages, model, system, read_timeout, schema)
     elif provider == "openai":
@@ -336,9 +360,26 @@ def stream_tokens(
     elif provider == "anthropic":
         yield from _anthropic(messages, model, system, key, think, read_timeout)
     elif provider == "gemini":
-        yield from _gemini(messages, model, system, key, think, read_timeout, schema)
+        yield from _gemini(messages, model, system, key, think, read_timeout, schema, tools)
     else:
         raise LLMError(f"지원하지 않는 제공자입니다: {provider}")
+
+
+def stream_tokens(
+    messages: list[dict], *, system: str = "", role: str = "chat", schema: dict | None = None
+) -> Iterator[str]:
+    """Stream just the words, for callers that have no tools to run."""
+    for event in stream_events(messages, system=system, role=role, schema=schema):
+        if "text" in event:
+            yield event["text"]
+
+
+def take_sentence(buffer: str) -> tuple[str, str]:
+    """Split off the first complete sentence. Returns (sentence, rest)."""
+    match = _SENTENCE_END.search(buffer)
+    if not match:
+        return "", buffer
+    return buffer[: match.end()].strip(), buffer[match.end() :]
 
 
 def stream_sentences(messages: list[dict], *, system: str = "", role: str = "chat") -> Iterator[str]:
