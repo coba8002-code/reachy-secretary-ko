@@ -44,6 +44,45 @@ def _request(method: str, path: str, *, data: bytes | None = None, headers: dict
         raise RobotError(f"{method} {path}: {exc}") from exc
 
 
+def volume() -> int:
+    """Return the speaker volume, 0-100."""
+    return int(json.loads(_request("GET", "/api/volume/current")).get("volume", 0))
+
+
+def set_volume(level: int) -> int:
+    """Set the speaker volume. Returns the level that was applied."""
+    level = max(0, min(100, int(level)))
+    _request(
+        "POST",
+        "/api/volume/set",
+        data=json.dumps({"volume": level}).encode(),
+        headers={"Content-Type": "application/json"},
+    )
+    return level
+
+
+def play_test_sound() -> None:
+    """Play the daemon's built-in test tone, so a volume change can be heard."""
+    _request("POST", "/api/volume/test-sound", data=b"", headers={"Content-Type": "application/json"})
+
+
+def mic_volume() -> int:
+    """Return the microphone gain, 0-100."""
+    return int(json.loads(_request("GET", "/api/volume/microphone/current")).get("volume", 0))
+
+
+def set_mic_volume(level: int) -> int:
+    """Set the microphone gain. Returns the level that was applied."""
+    level = max(0, min(100, int(level)))
+    _request(
+        "POST",
+        "/api/volume/microphone/set",
+        data=json.dumps({"volume": level}).encode(),
+        headers={"Content-Type": "application/json"},
+    )
+    return level
+
+
 def list_sounds() -> list[str]:
     """Return the sound files currently on the robot."""
     payload = json.loads(_request("GET", "/api/media/sounds"))

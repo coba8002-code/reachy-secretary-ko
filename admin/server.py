@@ -24,15 +24,29 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent
 sys.path.insert(0, str(ROOT.parent / "assistant"))
+sys.path.insert(0, str(ROOT.parent / "jarvis"))
 
 import config  # noqa: E402
 import netssl  # noqa: E402
+import robot  # noqa: E402
 
 PORT = int(os.getenv("REACHY_ADMIN_PORT", "8765"))
 # On the robot this must be reachable from a browser on another machine, so it
 # binds every interface there. The default stays loopback-only: this page holds
 # API keys, and it has no login.
 HOST = os.getenv("REACHY_ADMIN_HOST", "127.0.0.1")
+
+
+def audio_levels() -> dict:
+    """Return speaker and mic levels, or why they could not be read.
+
+    The daemon is a separate service that can be down while this page is up, so
+    a failure here has to be shown rather than crashing the settings request.
+    """
+    try:
+        return {"speaker": robot.volume(), "microphone": robot.mic_volume(), "available": True}
+    except robot.RobotError as exc:
+        return {"speaker": None, "microphone": None, "available": False, "detail": str(exc)}
 
 
 def check_provider(provider: str) -> dict:
@@ -129,6 +143,7 @@ class Handler(BaseHTTPRequestHandler):
                 "settings": settings,
                 "providers": config.status(),
                 "roles": config.role_status(),
+                "audio": audio_levels(),
             })
             return
 
@@ -170,6 +185,34 @@ class Handler(BaseHTTPRequestHandler):
                 return
             config.set_model(provider, payload.get("model", "").strip())
             self._send({"ok": True, "model": config.model_for(provider)})
+            return
+
+        if self.path == "/api/audio":
+            target = payload.get("target", "")
+            if target not in ("speaker", "microphone"):
+                self._send({"error": "speaker 또는 microphone 이어야 합니다"}, 400)
+                return
+            try:
+                level = int(payload.get("level"))
+            except (TypeError, ValueError):
+                self._send({"error": "0 에서 100 사이의 숫자가 필요합니다"}, 400)
+                return
+            try:
+                setter = robot.set_volume if target == "speaker" else robot.set_mic_volume
+                applied = setter(level)
+            except robot.RobotError as exc:
+                self._send({"error": f"로봇에 전달하지 못했습니다: {exc}"}, 502)
+                return
+            self._send({"ok": True, "level": applied})
+            return
+
+        if self.path == "/api/audio/test":
+            try:
+                robot.play_test_sound()
+            except robot.RobotError as exc:
+                self._send({"error": f"소리를 내지 못했습니다: {exc}"}, 502)
+                return
+            self._send({"ok": True})
             return
 
         if self.path == "/api/test":

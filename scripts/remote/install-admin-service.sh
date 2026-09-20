@@ -25,6 +25,9 @@ WorkingDirectory=/home/pollen/secretary
 # 로그인이 없는 화면이고 API 키를 다룬다. 외부에 열지 않고 터널로만 접근한다.
 Environment=REACHY_ADMIN_HOST=127.0.0.1
 Environment=REACHY_ADMIN_PORT=8765
+# 이 화면은 로봇 위에서 돈다. 데몬을 자기 IP 로 찾아 나가면 DHCP 가
+# 주소를 바꿀 때 소리 조절이 조용히 죽는다.
+Environment=REACHY_HOST=127.0.0.1
 ExecStart=/home/pollen/secretary/.venv/bin/python /home/pollen/secretary/admin/server.py
 Restart=always
 RestartSec=5

@@ -49,6 +49,10 @@
   .result { font-size: 12.5px; margin-top: 8px; }
   .result.ok { color: var(--ok); } .result.err { color: var(--err); }
   .hint { color: var(--muted); font-size: 12px; margin-top: 14px; padding-top: 14px; border-top: 1px solid var(--line); }
+  .slider { display: flex; align-items: center; gap: 12px; margin-bottom: 14px; }
+  .slider label { width: 130px; flex: none; color: var(--muted); font-size: 13.5px; }
+  .slider input[type=range] { flex: 1; min-width: 0; accent-color: var(--accent); }
+  .slider .val { width: 46px; flex: none; text-align: right; font-variant-numeric: tabular-nums; font-size: 13.5px; }
   #toast { position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%);
     background: var(--text); color: var(--bg); padding: 9px 16px; border-radius: 8px;
     font-size: 13px; opacity: 0; transition: opacity .2s; pointer-events: none; }
@@ -78,6 +82,25 @@
       <br><br>
       모델 이름은 제공자가 예고 없이 내립니다. 연결 확인에서 404 가 나면
       여기서 모델만 바꾸면 됩니다 — 코드를 고칠 필요가 없습니다.
+    </div>
+  </section>
+
+  <section>
+    <h2>소리</h2>
+    <div id="audio_unavailable" class="note" style="display:none"></div>
+    <div id="audio_controls">
+      <div class="slider">
+        <label>스피커</label>
+        <input type="range" id="vol_speaker" min="0" max="100" step="5" oninput="showLevel('speaker')" onchange="setLevel('speaker')">
+        <span class="val" id="vol_speaker_val">-</span>
+      </div>
+      <div class="slider">
+        <label>마이크</label>
+        <input type="range" id="vol_microphone" min="0" max="100" step="5" oninput="showLevel('microphone')" onchange="setLevel('microphone')">
+        <span class="val" id="vol_microphone_val">-</span>
+      </div>
+      <button onclick="testSound()">소리 내보기</button>
+      <p class="note">로봇에 바로 적용됩니다. 말로도 됩니다 - "소리 좀 줄여줘".</p>
     </div>
   </section>
 
@@ -122,11 +145,54 @@ async function load() {
   state = await r.json();
   renderRoles();
   renderProviders();
+  renderAudio();
   for (const k of ['owner_name','voice','output','stt_model']) {
     const el = document.getElementById(k);
     if (el && state.settings[k] != null) el.value = state.settings[k];
   }
   document.getElementById('vision_enabled').value = String(!!state.settings.vision_enabled);
+}
+
+function renderAudio() {
+  const a = state.audio || {};
+  const box = document.getElementById('audio_controls');
+  const warn = document.getElementById('audio_unavailable');
+  if (!a.available) {
+    box.style.display = 'none';
+    warn.style.display = '';
+    warn.textContent = '로봇 데몬에 연결할 수 없어 소리를 조절할 수 없습니다. ' + (a.detail || '');
+    return;
+  }
+  box.style.display = '';
+  warn.style.display = 'none';
+  for (const t of ['speaker', 'microphone']) {
+    document.getElementById('vol_' + t).value = a[t];
+    document.getElementById('vol_' + t + '_val').textContent = a[t];
+  }
+}
+
+function showLevel(target) {
+  // 끄는 동안 숫자가 따라오게만 한다. 로봇에 보내는 건 손을 뗀 뒤다.
+  document.getElementById('vol_' + target + '_val').textContent =
+    document.getElementById('vol_' + target).value;
+}
+
+async function setLevel(target) {
+  const level = Number(document.getElementById('vol_' + target).value);
+  const r = await fetch('/api/audio', {
+    method: 'POST', headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({target, level}),
+  });
+  const d = await r.json();
+  if (d.error) { toast(d.error); return; }
+  document.getElementById('vol_' + target + '_val').textContent = d.level;
+  toast((target === 'speaker' ? '스피커' : '마이크') + ' ' + d.level);
+}
+
+async function testSound() {
+  const r = await fetch('/api/audio/test', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: '{}'});
+  const d = await r.json();
+  toast(d.error || '소리를 냈습니다');
 }
 
 function renderRoles() {

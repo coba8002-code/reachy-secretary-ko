@@ -7,8 +7,9 @@ Run this once after installing, and again whenever phrases.py changes:
 
 Why pre-generate: the hook runs while the user is waiting. Synthesizing speech
 and uploading it on every notification would add seconds to something that
-should be instant. Here we pay that cost once; the hook then only has to say
-"play this file".
+should be instant - on the robot's own CPU a sentence takes a second or two to
+render. Here we pay that cost once; the hook then only has to say "play this
+file".
 
 The daemon keeps sounds under /tmp, so they are lost when the robot reboots.
 notify.py detects that and re-runs this automatically.
@@ -20,13 +21,13 @@ import argparse
 import shutil
 import subprocess
 import sys
-import tempfile
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import phrases  # noqa: E402
 import robot  # noqa: E402
+import tts  # noqa: E402
 
 DEFAULT_VOICE = "Yuna"
 
@@ -43,24 +44,13 @@ def macos_voices() -> list[str]:
 
 
 def synthesize(text: str, out_wav: Path, voice: str) -> None:
-    """Render one line to a 16 kHz mono wav using the macOS speech engine.
+    """Render one line to a mono PCM wav.
 
     Raises:
-        RuntimeError: if `say` or `afconvert` is unavailable or fails.
+        RuntimeError: if no speech engine is available.
 
     """
-    if not shutil.which("say") or not shutil.which("afconvert"):
-        raise RuntimeError("이 스크립트는 macOS의 say/afconvert 를 사용합니다.")
-
-    with tempfile.TemporaryDirectory() as tmp:
-        aiff = Path(tmp) / "speech.aiff"
-        # `say` writes AIFF; the daemon wants a plain PCM wav, so convert.
-        subprocess.run(["say", "-v", voice, "-o", str(aiff), text], check=True, timeout=60)
-        subprocess.run(
-            ["afconvert", "-f", "WAVE", "-d", "LEI16@16000", "-c", "1", str(aiff), str(out_wav)],
-            check=True,
-            timeout=60,
-        )
+    tts.synthesize(text, out_wav, macos_voice=voice)
 
 
 def build_and_upload(voice: str, cache: Path, *, verbose: bool = True) -> int:
@@ -92,13 +82,18 @@ def main() -> int:
     parser.add_argument("--rebuild", action="store_true", help="캐시를 지우고 다시 합성")
     args = parser.parse_args()
 
-    voices = macos_voices()
+    using = tts.engine()
     if args.list_voices:
+        print(f"현재 엔진: {using or '(없음)'}")
+        if using == "piper":
+            print(f"  로봇 자체 음성: {tts.VOICE_PATH.name}")
+            return 0
         print("사용 가능한 한국어 음성:")
-        for v in voices:
+        for v in macos_voices():
             print("  -", v)
         return 0
 
+    voices = [] if using == "piper" else macos_voices()
     if voices and args.voice not in voices:
         print(f"'{args.voice}' 음성이 없습니다. 사용 가능: {', '.join(voices) or '(없음)'}", file=sys.stderr)
         return 1
@@ -112,7 +107,7 @@ def main() -> int:
         print("로봇에 연결할 수 없습니다. 전원과 네트워크를 확인해 주세요.", file=sys.stderr)
         return 1
 
-    print(f"음성: {args.voice}\n")
+    print(f"음성: {tts.VOICE_PATH.name if using == 'piper' else args.voice}  (엔진: {using or '없음'})\n")
     try:
         count = build_and_upload(args.voice, cache)
     except (RuntimeError, subprocess.SubprocessError, robot.RobotError) as exc:

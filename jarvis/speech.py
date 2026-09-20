@@ -4,18 +4,18 @@ The fixed phrases in phrases.py are pre-rendered at install time. Task names are
 not - they come from whatever the user typed - so those clips are synthesized the
 first time they are needed and cached by content hash afterwards. Repeating the
 same task name costs one HTTP call, same as a fixed phrase.
+
+Synthesis itself lives in tts.py, which uses the robot's own Piper voice.
 """
 
 from __future__ import annotations
 
 import hashlib
 import os
-import shutil
-import subprocess
-import tempfile
 from pathlib import Path
 
 import robot
+import tts
 
 CACHE_DIR = Path.home() / ".cache" / "reachy-jarvis" / "sounds"
 VOICE = os.getenv("REACHY_JARVIS_VOICE", "Yuna")
@@ -28,29 +28,10 @@ def cache_name(text: str) -> str:
 
 
 def synthesize(text: str, out_wav: Path) -> bool:
-    """Render text to a 16 kHz mono wav. Returns False if the tools are missing."""
-    if not shutil.which("say") or not shutil.which("afconvert"):
-        return False
-
+    """Render text to a wav. Returns False if no speech engine is available."""
     try:
-        with tempfile.TemporaryDirectory() as tmp:
-            aiff = Path(tmp) / "s.aiff"
-            subprocess.run(
-                ["say", "-v", VOICE, "-o", str(aiff), text],
-                check=True,
-                timeout=30,
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-            )
-            out_wav.parent.mkdir(parents=True, exist_ok=True)
-            subprocess.run(
-                ["afconvert", "-f", "WAVE", "-d", "LEI16@16000", "-c", "1", str(aiff), str(out_wav)],
-                check=True,
-                timeout=30,
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-            )
-    except (subprocess.SubprocessError, OSError):
+        tts.synthesize(text, out_wav, macos_voice=VOICE)
+    except tts.TTSError:
         return False
     return out_wav.exists()
 
