@@ -90,6 +90,16 @@ just talk to it. Fallback options are in the Korean guide.
   app's tool interface contract, Anthropic SDK parameters against v1.7.0, and `gmail_draft`'s MIME
   assembly, Korean header encoding, and reply threading against a stubbed Gmail service.
 
+## Jarvis notifier (stage 1)
+
+Reachy Mini announces, in Korean, when Claude Code is blocked waiting for your
+approval and when a long task finishes — so you can stop watching the terminal.
+Short turns stay silent on purpose; a robot that comments on everything gets
+tuned out, and the announcements that matter get lost with it.
+
+It needs no microphone — only the speaker and motors, which work independently
+of the mic fault described above. Setup: [jarvis/README.ko.md](jarvis/README.ko.md).
+
 ## License
 
 [Apache License 2.0](LICENSE) — the same license as the upstream conversation app this extends.

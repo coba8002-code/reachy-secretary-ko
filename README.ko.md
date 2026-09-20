@@ -192,6 +192,18 @@ reachy-mini-conversation-app --ui
 
 ---
 
+## 자비스 알림 로봇 (1단계)
+
+Claude Code가 승인을 기다리거나 긴 작업을 끝냈을 때 로봇이 한국어로 알려줍니다.
+**로봇 마이크 없이 동작합니다** — 말하는 쪽만 쓰기 때문입니다.
+
+설치와 설정은 [jarvis/README.ko.md](jarvis/README.ko.md) 참고.
+
+```bash
+python3 jarvis/prepare.py          # 음성 합성 + 업로드 (최초 1회)
+# jarvis/settings.snippet.json 을 ~/.claude/settings.json 에 병합
+```
+
 ## 라이선스
 
 [Apache License 2.0](LICENSE). 확장 대상인 공식 대화 앱과 같은 라이선스입니다.
