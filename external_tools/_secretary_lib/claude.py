@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+from pathlib import Path
 from typing import Any
 
 logger = logging.getLogger(__name__)
@@ -21,9 +22,26 @@ class ClaudeError(RuntimeError):
     """Raised with a user-facing Korean message when Claude cannot answer."""
 
 
-def _require_credentials() -> None:
-    if not (os.getenv("ANTHROPIC_API_KEY") or os.getenv("ANTHROPIC_AUTH_TOKEN")):
-        raise ClaudeError("ANTHROPIC_API_KEY가 설정되어 있지 않습니다. .env 파일을 확인해 주세요.")
+# Where the admin panel stores settings. Keys belong in one place: a 0600 file
+# on this machine, not in a shell history, a committed .env, or a chat window.
+ADMIN_CONFIG = Path.home() / ".local" / "share" / "reachy-secretary" / "config.json"
+
+
+def api_key() -> str | None:
+    """Return the Claude key: the admin panel's, else an environment variable."""
+    try:
+        settings = json.loads(ADMIN_CONFIG.read_text(encoding="utf-8"))
+        key = (settings.get("keys") or {}).get("anthropic")
+        if key:
+            return str(key)
+    except (OSError, json.JSONDecodeError):
+        pass
+    return os.getenv("ANTHROPIC_API_KEY") or os.getenv("ANTHROPIC_AUTH_TOKEN")
+
+
+def _require_credentials(key: str | None) -> None:
+    if not key:
+        raise ClaudeError("Claude API 키가 없습니다. 관리자 화면에서 입력해 주세요.")
 
 
 async def complete(
@@ -33,6 +51,7 @@ async def complete(
     max_tokens: int,
     effort: str = "medium",
     json_schema: dict[str, Any] | None = None,
+    api_key_override: str | None = None,
 ) -> Any:
     """Run one Claude turn.
 
@@ -43,7 +62,8 @@ async def complete(
             empty/truncated response. The message is safe to speak to the user.
 
     """
-    _require_credentials()
+    key = api_key_override or api_key()
+    _require_credentials(key)
 
     try:
         from anthropic import AsyncAnthropic
@@ -55,7 +75,7 @@ async def complete(
         output_config["format"] = {"type": "json_schema", "schema": json_schema}
 
     try:
-        client = AsyncAnthropic()
+        client = AsyncAnthropic(api_key=key)
         async with client.beta.messages.stream(
             model=MODEL,
             max_tokens=max_tokens,
