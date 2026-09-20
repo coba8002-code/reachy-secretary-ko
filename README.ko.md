@@ -1,5 +1,7 @@
 # Reachy Mini 한국어 비서
 
+*[English README →](README.md)*
+
 Reachy Mini Wireless를 한국어로 대화하는 개인 비서로 만드는 설정 묶음입니다.
 
 바닥부터 만들지 않습니다. Pollen Robotics의 공식 대화 앱
