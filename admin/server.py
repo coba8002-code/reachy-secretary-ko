@@ -15,6 +15,7 @@ page shows keys masked; the full value is never returned by the API.
 from __future__ import annotations
 
 import json
+import os
 import sys
 import urllib.error
 import urllib.request
@@ -27,7 +28,11 @@ sys.path.insert(0, str(ROOT.parent / "assistant"))
 import config  # noqa: E402
 import netssl  # noqa: E402
 
-PORT = 8765
+PORT = int(os.getenv("REACHY_ADMIN_PORT", "8765"))
+# On the robot this must be reachable from a browser on another machine, so it
+# binds every interface there. The default stays loopback-only: this page holds
+# API keys, and it has no login.
+HOST = os.getenv("REACHY_ADMIN_HOST", "127.0.0.1")
 
 
 def check_provider(provider: str) -> dict:
@@ -158,8 +163,12 @@ class Handler(BaseHTTPRequestHandler):
 
 def main() -> int:
     """Start the admin panel."""
-    server = ThreadingHTTPServer(("127.0.0.1", PORT), Handler)
-    print(f"관리자 화면: http://localhost:{PORT}")
+    server = ThreadingHTTPServer((HOST, PORT), Handler)
+    shown = "localhost" if HOST in ("127.0.0.1", "localhost") else HOST
+    print(f"관리자 화면: http://{shown}:{PORT}")
+    if HOST not in ("127.0.0.1", "localhost"):
+        print("  주의: 이 화면에는 로그인이 없고 API 키가 들어 있습니다.")
+        print("        신뢰하는 네트워크에서만 여세요.")
     print(f"설정 파일  : {config.CONFIG_PATH}")
     print("Ctrl-C 로 종료\n")
     try:
