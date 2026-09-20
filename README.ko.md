@@ -192,6 +192,10 @@ reachy-mini-conversation-app --ui
 
 ---
 
+## 라이선스
+
+[Apache License 2.0](LICENSE). 확장 대상인 공식 대화 앱과 같은 라이선스입니다.
+
 ## 알려진 한계
 
 - **한국어 지원은 허깅페이스 백엔드에 달려 있습니다.** 이 묶음은 `ko`를 전달할 뿐이고,

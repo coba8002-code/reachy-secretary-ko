@@ -90,6 +90,10 @@ just talk to it. Fallback options are in the Korean guide.
   app's tool interface contract, Anthropic SDK parameters against v1.7.0, and `gmail_draft`'s MIME
   assembly, Korean header encoding, and reply threading against a stubbed Gmail service.
 
+## License
+
+[Apache License 2.0](LICENSE) — the same license as the upstream conversation app this extends.
+
 ## Credits
 
 Built on [Reachy Mini](https://github.com/pollen-robotics/reachy_mini) and the
