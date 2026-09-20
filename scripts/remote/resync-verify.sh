@@ -18,7 +18,7 @@ fi
 echo
 echo "=== 앱 venv 파이썬(3.12)으로 실제 import 시험 ==="
 cd $TOOLS
-for m in ask_claude gmail_draft gmail_digest calendar_agenda calendar_add_event; do
+for m in deep_think gmail_draft gmail_digest calendar_agenda calendar_add_event; do
   /venvs/apps_venv/bin/python - "$m" <<'PY' 2>&1 | sed 's/^/  /'
 import sys, types, importlib
 name = sys.argv[1]

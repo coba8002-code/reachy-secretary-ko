@@ -1,14 +1,14 @@
-"""Create a Gmail draft, with the body written by Claude. Never sends it.
+"""Create a Gmail draft, with the body written by the judgement model. Never sends it.
 
 The draft lands in the user's Drafts folder and stays there. Sending is a
 deliberate human action taken in a mail client - a spoken sentence is too thin a
 gate for something irreversible. This module calls only the Gmail draft-create
 endpoint, never the send or delete endpoints.
 
-Why Claude writes the body: the realtime voice backend is tuned for short spoken
-turns, and relaying a paragraph of prose verbatim through a tool argument is
-exactly what it is worst at. The robot passes a one-line brief instead, and the
-prose is composed here.
+Why a second model writes the body: the realtime voice backend is tuned for short
+spoken turns, and relaying a paragraph of prose verbatim through a tool argument
+is exactly what it is worst at. The robot passes a one-line brief instead, and
+the prose is composed here by whichever model holds the "깊은 판단" role.
 """
 
 from __future__ import annotations
@@ -26,7 +26,7 @@ from typing import Any
 from reachy_mini_conversation_app.tools.core_tools import Tool, ToolDependencies
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from _secretary_lib.claude import ClaudeError, complete  # noqa: E402
+from _secretary_lib.reason import ReasonError, complete  # noqa: E402
 from _secretary_lib.google_auth import GoogleAuthError, build_service  # noqa: E402
 
 logger = logging.getLogger(__name__)
@@ -138,10 +138,10 @@ def _fetch_original(message_id: str) -> dict[str, Any]:
 
 
 async def _compose(brief: str, target: dict[str, Any] | None, to: list[str]) -> dict[str, str]:
-    """Ask Claude to write the subject and body.
+    """Ask the judgement model to write the subject and body.
 
     Raises:
-        ClaudeError: if Claude cannot produce a usable draft.
+        ReasonError: if it cannot produce a usable draft.
 
     """
     parts: list[str] = []
@@ -167,11 +167,11 @@ async def _compose(brief: str, target: dict[str, Any] | None, to: list[str]) -> 
     )
 
     if not isinstance(result, dict):
-        raise ClaudeError("클로드가 예상과 다른 형식을 반환했습니다.")
+        raise ReasonError("작성 모델이 예상과 다른 형식을 반환했습니다.")
 
     body = str(result.get("body", "")).strip()
     if not body:
-        raise ClaudeError("클로드가 빈 본문을 반환했습니다.")
+        raise ReasonError("작성 모델이 빈 본문을 반환했습니다.")
 
     return {"subject": str(result.get("subject", "")).strip(), "body": body}
 
@@ -346,7 +346,7 @@ class GmailDraft(Tool):
 
             return await asyncio.to_thread(_save_draft, to, subject, body, cc, target)
 
-        except ClaudeError as exc:
+        except ReasonError as exc:
             return {"error": f"본문을 작성하지 못했습니다: {exc}"}
         except GoogleAuthError as exc:
             logger.warning("gmail_draft auth error: %s", exc)

@@ -1,8 +1,11 @@
-"""Shared Claude client for the secretary tools.
+"""The Anthropic backend for the judgement role.
 
-Both ask_claude (spoken answers) and gmail_draft (written email) delegate to
-Claude, with very different output contracts. This module owns the transport and
-the error messages; each caller supplies its own system prompt and schema.
+Claude is kept on its own client rather than going through assistant/llm.py,
+because adaptive thinking and server-side fallback have no equivalent in the
+plain streaming path and routing through it would silently give both up.
+
+Nothing calls this directly. reason.py picks it when the "깊은 판단" role points
+at Claude, and falls back to the shared transport for every other provider.
 """
 
 from __future__ import annotations

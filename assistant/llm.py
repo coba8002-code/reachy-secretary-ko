@@ -18,6 +18,7 @@ import threading
 import urllib.parse
 from collections.abc import Iterator
 from pathlib import Path
+from typing import Any
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
@@ -143,13 +144,17 @@ def _post_stream(
             conn.close()
 
 
-def _ollama(messages: list[dict], model: str, system: str, read_timeout: float) -> Iterator[str]:
+def _ollama(
+    messages: list[dict], model: str, system: str, read_timeout: float, schema: dict | None = None
+) -> Iterator[str]:
     base = config.PROVIDERS["local"]["base_url"]
-    payload = {
+    payload: dict = {
         "model": model,
         "messages": ([{"role": "system", "content": system}] if system else []) + messages,
         "stream": True,
     }
+    if schema is not None:
+        payload["format"] = schema
     for line in _post_stream(f"{base}/api/chat", payload, {}, read_timeout):
         line = line.strip()
         if not line:
@@ -164,13 +169,19 @@ def _ollama(messages: list[dict], model: str, system: str, read_timeout: float) 
 
 
 def _openai_compatible(
-    messages: list[dict], model: str, system: str, base: str, key: str, read_timeout: float
+    messages: list[dict], model: str, system: str, base: str, key: str, read_timeout: float,
+    schema: dict | None = None,
 ) -> Iterator[str]:
-    payload = {
+    payload: dict = {
         "model": model,
         "messages": ([{"role": "system", "content": system}] if system else []) + messages,
         "stream": True,
     }
+    if schema is not None:
+        payload["response_format"] = {
+            "type": "json_schema",
+            "json_schema": {"name": "result", "schema": schema, "strict": True},
+        }
     for line in _post_stream(
         f"{base}/chat/completions", payload, {"Authorization": f"Bearer {key}"}, read_timeout
     ):
@@ -221,8 +232,36 @@ def _anthropic(
                 yield piece
 
 
+# Gemini accepts a subset of JSON Schema and rejects the request outright when it
+# meets a keyword it does not know, so anything it cannot read is dropped.
+_GEMINI_SCHEMA_KEYS = frozenset({
+    "type", "format", "description", "nullable", "enum",
+    "items", "properties", "required", "maxItems", "minItems",
+})
+
+
+def _gemini_schema(node: Any) -> Any:
+    """Strip a JSON Schema down to what Gemini will accept."""
+    if isinstance(node, list):
+        return [_gemini_schema(v) for v in node]
+    if not isinstance(node, dict):
+        return node
+    out = {}
+    for key, value in node.items():
+        if key not in _GEMINI_SCHEMA_KEYS:
+            continue
+        if key == "properties" and isinstance(value, dict):
+            out[key] = {k: _gemini_schema(v) for k, v in value.items()}
+        elif key == "items":
+            out[key] = _gemini_schema(value)
+        else:
+            out[key] = value
+    return out
+
+
 def _gemini(
-    messages: list[dict], model: str, system: str, key: str, think: bool, read_timeout: float
+    messages: list[dict], model: str, system: str, key: str, think: bool, read_timeout: float,
+    schema: dict | None = None,
 ) -> Iterator[str]:
     contents = [
         {"role": "model" if m["role"] == "assistant" else "user", "parts": [{"text": m["content"]}]}
@@ -231,8 +270,15 @@ def _gemini(
     payload: dict = {"contents": contents}
     if system:
         payload["systemInstruction"] = {"parts": [{"text": system}]}
+
+    generation: dict = {}
     if not think:
-        payload["generationConfig"] = {"thinkingConfig": {"thinkingBudget": 0}}
+        generation["thinkingConfig"] = {"thinkingBudget": 0}
+    if schema is not None:
+        generation["responseMimeType"] = "application/json"
+        generation["responseSchema"] = _gemini_schema(schema)
+    if generation:
+        payload["generationConfig"] = generation
 
     # The key goes in a header, never in the query string: URLs end up in logs,
     # in exception text, and in anything that reports a failed request.
@@ -255,7 +301,9 @@ def _gemini(
                     yield piece
 
 
-def stream_tokens(messages: list[dict], *, system: str = "", role: str = "chat") -> Iterator[str]:
+def stream_tokens(
+    messages: list[dict], *, system: str = "", role: str = "chat", schema: dict | None = None
+) -> Iterator[str]:
     """Stream the reply from the provider assigned to this role.
 
     Roles let one robot use different providers for different jobs - a cheap fast
@@ -276,15 +324,19 @@ def stream_tokens(messages: list[dict], *, system: str = "", role: str = "chat")
     read_timeout = READ_TIMEOUT_CHAT if role == "chat" else READ_TIMEOUT
 
     if provider == "local":
-        yield from _ollama(messages, model, system, read_timeout)
+        yield from _ollama(messages, model, system, read_timeout, schema)
     elif provider == "openai":
-        yield from _openai_compatible(messages, model, system, "https://api.openai.com/v1", key, read_timeout)
+        yield from _openai_compatible(
+            messages, model, system, "https://api.openai.com/v1", key, read_timeout, schema
+        )
     elif provider == "grok":
-        yield from _openai_compatible(messages, model, system, spec["base_url"], key, read_timeout)
+        yield from _openai_compatible(
+            messages, model, system, spec["base_url"], key, read_timeout, schema
+        )
     elif provider == "anthropic":
         yield from _anthropic(messages, model, system, key, think, read_timeout)
     elif provider == "gemini":
-        yield from _gemini(messages, model, system, key, think, read_timeout)
+        yield from _gemini(messages, model, system, key, think, read_timeout, schema)
     else:
         raise LLMError(f"지원하지 않는 제공자입니다: {provider}")
 

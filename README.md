@@ -24,8 +24,8 @@ the secretary half and the Korean half, and nothing else.
 | `external_tools/calendar_agenda.py` | Read Google Calendar — today, tomorrow, or the week ahead |
 | `external_tools/calendar_add_event.py` | Create a calendar event |
 | `external_tools/gmail_digest.py` | Summarize recent inbox mail, bulk mail filtered out. Read-only |
-| `external_tools/gmail_draft.py` | Write an email draft. Body composed by Claude. Threaded replies |
-| `external_tools/ask_claude.py` | Hand reasoning-heavy turns to Claude Opus 5 |
+| `external_tools/gmail_draft.py` | Write an email draft. Body composed by the judgement model. Threaded replies |
+| `external_tools/deep_think.py` | Hand reasoning-heavy turns to whichever model holds the judgement role |
 | `authorize.py` | One-time Google OAuth, run on a machine with a browser |
 
 ## Two design decisions worth knowing
@@ -57,7 +57,9 @@ leaves a visible `[확인 필요]` marker instead, and the robot is told to poin
 - Reachy Mini (built for the Wireless version; Lite should work with the app running on the host)
 - The official conversation app, installed and running
 - Python 3.12
-- An Anthropic API key — required for `ask_claude` **and** for draft composition
+- An API key for at least one provider — Gemini, Claude, OpenAI or Grok. The admin panel assigns
+  which one does chat, judgement and speech-to-text; `deep_think` and draft composition follow the
+  judgement role
 - A Google Cloud project with the Calendar and Gmail APIs enabled
 
 ## Quick start
@@ -84,7 +86,7 @@ just talk to it. Fallback options are in the Korean guide.
 - **Korean support depends on the Hugging Face realtime backend.** This repository passes `ko`
   through; whether the backend honors it is the single biggest unverified assumption here.
 - **No email sending or deletion.** By design, as above.
-- **`ask_claude` cannot see the conversation.** The robot has to supply context explicitly. The
+- **`deep_think` cannot see the conversation.** The robot has to supply context explicitly. The
   profile instructs it to, but pronouns passed through verbatim will not resolve.
 - **Not yet run against real hardware or a real Google account.** Verified so far: syntax, the
   app's tool interface contract, Anthropic SDK parameters against v1.7.0, and `gmail_draft`'s MIME

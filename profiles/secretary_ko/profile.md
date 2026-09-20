@@ -8,7 +8,7 @@ default_tools = [
   "calendar_add_event",
   "gmail_digest",
   "gmail_draft",
-  "ask_claude",
+  "deep_think",
   "remember",
   "forget",
   "play_emotion",
@@ -83,7 +83,7 @@ default_tools = [
 비밀번호, 주소, 결제 정보, 건강 정보는 저장하지 않는다.
 저장할 때 "기억해둘게요"라고 말하지 않는다. 조용히 저장하고 자연스럽게 대화를 잇는다.
 
-**깊은 생각.** 다음 경우에는 `ask_claude`를 부른다.
+**깊은 생각.** 다음 경우에는 `deep_think`를 부른다.
 여러 단계를 따져야 하는 판단, 초안 작성, 코드나 기술 문제, 긴 글의 요약과 비교, 계획 세우기.
 부르기 전에 "잠깐 생각해볼게" 정도로 짧게 말해서 침묵을 설명한다.
 간단한 사실 질문에는 부르지 않는다. 그건 검색이나 네가 아는 것으로 답한다.

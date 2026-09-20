@@ -18,7 +18,7 @@ Reachy Mini Wireless를 한국어로 대화하는 개인 비서로 만드는 설
 | `external_tools/calendar_add_event.py` | 구글 캘린더에 일정 등록 |
 | `external_tools/gmail_digest.py` | Gmail 요약. 읽기 전용 |
 | `external_tools/gmail_draft.py` | 메일 초안 작성. 본문은 Claude가 집필. 스레드 답장 지원. **발송은 하지 않음** |
-| `external_tools/ask_claude.py` | 어려운 질문을 Claude Opus 5로 넘기는 '깊은 생각' 툴 |
+| `external_tools/deep_think.py` | 어려운 질문을 '깊은 판단' 역할을 맡은 모델로 넘기는 툴 |
 | `external_tools/_secretary_lib/claude.py` | 위 두 툴이 공유하는 Claude 호출 모듈 |
 | `authorize.py` | 구글 OAuth 1회 인증 (노트북에서 실행) |
 
@@ -85,7 +85,7 @@ HF_REALTIME_CONNECTION_MODE=local
 HF_REALTIME_WS_URL=ws://<노트북-LAN-IP>:8765/v1/realtime
 ```
 
-## 4. Claude 연결 (ask_claude)
+## 4. 깊은 생각 연결 (deep_think)
 
 [console.anthropic.com](https://console.anthropic.com)에서 API 키를 발급받아 `.env`에 넣습니다.
 
@@ -98,11 +98,12 @@ pip install anthropic
 ```
 
 음성 백엔드는 응답 속도에 맞춰져 있어서 여러 단계를 따지는 추론에는 약합니다.
-`ask_claude`는 그런 질문만 Claude Opus 5로 넘기는 우회로입니다. 빠른 대화 루프는
+`deep_think`는 그런 질문만 더 강한 모델로 넘기는 우회로입니다. 어느 모델이 받을지는
+관리자 화면의 '깊은 판단' 역할이 정합니다. 빠른 대화 루프는
 그대로 두고, 깊이가 필요한 몇 번의 턴만 위임합니다.
 
 지연을 줄이려고 `effort`를 기본값 `high`가 아니라 `medium`으로 낮춰 두었습니다.
-답이 얕게 느껴지면 `ask_claude.py`의 `output_config`에서 올리세요. 대신 침묵이 길어집니다.
+답이 얕게 느껴지면 관리자에서 더 강한 제공자로 역할을 옮기세요. 대신 침묵이 길어집니다.
 
 ## 5. 구글 연결 (캘린더 · 메일)
 
@@ -186,7 +187,7 @@ reachy-mini-conversation-app --ui
 | "메일 온 거 중에 중요한 거 있어?" | `gmail_digest` |
 | "민수씨 메일에 답장 초안 써줘" | `gmail_digest` → `gmail_draft` (스레드 답장) |
 | "김대리한테 회의 연기한다고 메일 써줘" | `gmail_draft` (주소 모르면 되물음) |
-| "이 문제 어떻게 접근하는 게 좋을까?" | `ask_claude` |
+| "이 문제 어떻게 접근하는 게 좋을까?" | `deep_think` |
 | "나 커피 안 마셔" | `remember` (조용히 저장) |
 | "지금 파리 몇 시야?" | 내장 time 툴 |
 
@@ -220,7 +221,7 @@ python3 jarvis/prepare.py          # 음성 합성 + 업로드 (최초 1회)
   (사용자가 문장을 그대로 불러준 경우는 예외).
 - **Claude는 없는 사실을 지어내지 말고 `[확인 필요]`로 표시하도록 지시되어 있습니다.**
   초안을 보내기 전에 그 표시가 남아 있는지 확인하세요.
-- **`ask_claude`는 대화 맥락을 자동으로 보지 못합니다.** 로봇이 `context` 인자에 필요한
+- **`deep_think`는 대화 맥락을 자동으로 보지 못합니다.** 로봇이 `context` 인자에 필요한
   배경을 넣어 주어야 합니다. 프로필에서 그렇게 지시해 두었지만, 대명사를 그대로 넘기면
   Claude가 무엇을 가리키는지 알 수 없습니다.
 - **툴 코드는 실물 하드웨어와 실제 구글 계정에서 아직 실행해 보지 않았습니다.**
