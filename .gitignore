@@ -1,0 +1,21 @@
+# 인증 정보 — 절대 커밋하지 말 것
+.env
+credentials.json
+token.json
+*.pem
+*.key
+
+# 실제 설정값이 담길 수 있는 파일
+external_content/
+installed_tool_spaces.json
+profile_toolsets.json
+startup_settings.json
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# macOS
+.DS_Store
