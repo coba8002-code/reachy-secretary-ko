@@ -145,10 +145,14 @@ def _gemini(messages: list[dict], model: str, system: str, key: str) -> Iterator
                     yield piece
 
 
-def stream_tokens(messages: list[dict], *, system: str = "") -> Iterator[str]:
-    """Stream the reply from whichever provider is configured."""
-    settings = config.load()
-    provider = settings.get("provider", "local")
+def stream_tokens(messages: list[dict], *, system: str = "", role: str = "chat") -> Iterator[str]:
+    """Stream the reply from the provider assigned to this role.
+
+    Roles let one robot use different providers for different jobs - a cheap fast
+    model for chat, a stronger one for judgement. An unassigned role falls back
+    to the main provider, so a setup that never touched roles keeps working.
+    """
+    provider = config.provider_for_role(role)
     model = config.model_for(provider)
     key = config.api_key(provider)
 
@@ -172,10 +176,10 @@ def stream_tokens(messages: list[dict], *, system: str = "") -> Iterator[str]:
         raise LLMError(f"지원하지 않는 제공자입니다: {provider}")
 
 
-def stream_sentences(messages: list[dict], *, system: str = "") -> Iterator[str]:
+def stream_sentences(messages: list[dict], *, system: str = "", role: str = "chat") -> Iterator[str]:
     """Stream the reply one sentence at a time, so speech can start early."""
     buffer = ""
-    for piece in stream_tokens(messages, system=system):
+    for piece in stream_tokens(messages, system=system, role=role):
         buffer += piece
         while True:
             match = _SENTENCE_END.search(buffer)
