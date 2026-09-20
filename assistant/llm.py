@@ -24,7 +24,18 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import config  # noqa: E402
 import netssl  # noqa: E402
 
-TIMEOUT = 120.0
+# Reaching the provider at all should be quick - the robot is on wifi, and the
+# handshake measured 140ms. Five seconds means something is actually wrong.
+CONNECT_TIMEOUT = 5.0
+
+# How long to wait for the next byte once the request is in. This is a gap
+# timeout, not a total: it only fires when nothing at all arrives. Chat gets a
+# short one because a silent robot reads as broken - better to say "잠시
+# 문제가 있어요" at fifteen seconds than to stand there for two minutes.
+# Judgement runs in the background where a long pause costs nothing.
+READ_TIMEOUT = 90.0
+READ_TIMEOUT_CHAT = 15.0
+
 # Sentence enders, Korean and western. The trailing space/quote keeps decimals
 # and abbreviations from splitting a sentence in half.
 _SENTENCE_END = re.compile(r'(?<=[.!?。！？])\s|(?<=[다요][.!?])\s*')
@@ -40,6 +51,17 @@ class LLMError(RuntimeError):
     """Raised with a user-facing message when a brain cannot answer."""
 
 
+def _reason(exc: BaseException) -> str:
+    """Turn a socket failure into something worth saying out loud."""
+    if isinstance(exc, TimeoutError):
+        return "응답이 제때 오지 않았습니다"
+    if isinstance(exc, ConnectionRefusedError):
+        return "연결이 거부되었습니다"
+    if isinstance(exc, OSError) and exc.errno is not None:
+        return f"연결에 실패했습니다: {exc.strerror or exc}"
+    return str(exc) or exc.__class__.__name__
+
+
 # One kept-alive connection per origin. A new TLS handshake to the model provider
 # costs ~130ms from the robot, which is audible when it happens on every turn.
 # Ollama is plain HTTP on localhost, so the scheme has to be honoured.
@@ -48,16 +70,16 @@ _connections: dict[str, _Connection] = {}
 _connections_lock = threading.Lock()
 
 
-def _connect(scheme: str, host: str) -> _Connection:
-    """Return a connection to the origin, reusing the last one if it is still open."""
+def _connect(scheme: str, host: str) -> tuple[_Connection, bool]:
+    """Return a connection to the origin, and whether it came from the pool."""
     origin = f"{scheme}://{host}"
     with _connections_lock:
         conn = _connections.pop(origin, None)
     if conn is not None:
-        return conn
+        return conn, True
     if scheme == "https":
-        return http.client.HTTPSConnection(host, timeout=TIMEOUT, context=netssl.context())
-    return http.client.HTTPConnection(host, timeout=TIMEOUT)
+        return http.client.HTTPSConnection(host, timeout=CONNECT_TIMEOUT, context=netssl.context()), False
+    return http.client.HTTPConnection(host, timeout=CONNECT_TIMEOUT), False
 
 
 def _keep(scheme: str, host: str, conn: _Connection) -> None:
@@ -70,7 +92,9 @@ def _keep(scheme: str, host: str, conn: _Connection) -> None:
         old.close()
 
 
-def _post_stream(url: str, payload: dict, headers: dict[str, str]) -> Iterator[bytes]:
+def _post_stream(
+    url: str, payload: dict, headers: dict[str, str], read_timeout: float = READ_TIMEOUT
+) -> Iterator[bytes]:
     """POST and yield response lines as they arrive."""
     parts = urllib.parse.urlsplit(url)
     scheme = parts.scheme or "https"
@@ -80,18 +104,21 @@ def _post_stream(url: str, payload: dict, headers: dict[str, str]) -> Iterator[b
     sent = {"Content-Type": "application/json", "Content-Length": str(len(body)), **headers}
 
     # A kept connection can have been closed by the far end while it sat idle.
-    # That failure looks identical to a real network error, so try once more on a
-    # fresh socket before deciding the provider is unreachable.
+    # That failure looks identical to a real network error, so retry once on a
+    # fresh socket - but only when the connection was a reused one. Retrying a
+    # brand new connection just makes the user wait for the same failure twice.
     for attempt in (1, 2):
-        conn = _connect(scheme, host)
+        conn, reused = _connect(scheme, host)
         try:
             conn.request("POST", path, body=body, headers=sent)
+            if conn.sock is not None:
+                conn.sock.settimeout(read_timeout)
             response = conn.getresponse()
         except (http.client.HTTPException, OSError) as exc:
             conn.close()
-            if attempt == 1:
+            if attempt == 1 and reused:
                 continue
-            raise LLMError(str(exc)) from exc
+            raise LLMError(_reason(exc)) from exc
         break
 
     if response.status >= 400:
@@ -108,7 +135,7 @@ def _post_stream(url: str, payload: dict, headers: dict[str, str]) -> Iterator[b
             yield line
         drained = True
     except (http.client.HTTPException, OSError) as exc:
-        raise LLMError(str(exc)) from exc
+        raise LLMError(_reason(exc)) from exc
     finally:
         if drained:
             _keep(scheme, host, conn)
@@ -116,14 +143,14 @@ def _post_stream(url: str, payload: dict, headers: dict[str, str]) -> Iterator[b
             conn.close()
 
 
-def _ollama(messages: list[dict], model: str, system: str) -> Iterator[str]:
+def _ollama(messages: list[dict], model: str, system: str, read_timeout: float) -> Iterator[str]:
     base = config.PROVIDERS["local"]["base_url"]
     payload = {
         "model": model,
         "messages": ([{"role": "system", "content": system}] if system else []) + messages,
         "stream": True,
     }
-    for line in _post_stream(f"{base}/api/chat", payload, {}):
+    for line in _post_stream(f"{base}/api/chat", payload, {}, read_timeout):
         line = line.strip()
         if not line:
             continue
@@ -136,13 +163,17 @@ def _ollama(messages: list[dict], model: str, system: str) -> Iterator[str]:
             yield piece
 
 
-def _openai_compatible(messages: list[dict], model: str, system: str, base: str, key: str) -> Iterator[str]:
+def _openai_compatible(
+    messages: list[dict], model: str, system: str, base: str, key: str, read_timeout: float
+) -> Iterator[str]:
     payload = {
         "model": model,
         "messages": ([{"role": "system", "content": system}] if system else []) + messages,
         "stream": True,
     }
-    for line in _post_stream(f"{base}/chat/completions", payload, {"Authorization": f"Bearer {key}"}):
+    for line in _post_stream(
+        f"{base}/chat/completions", payload, {"Authorization": f"Bearer {key}"}, read_timeout
+    ):
         text = line.decode("utf-8", "replace").strip()
         if not text.startswith("data:"):
             continue
@@ -159,7 +190,9 @@ def _openai_compatible(messages: list[dict], model: str, system: str, base: str,
                 yield piece
 
 
-def _anthropic(messages: list[dict], model: str, system: str, key: str, think: bool) -> Iterator[str]:
+def _anthropic(
+    messages: list[dict], model: str, system: str, key: str, think: bool, read_timeout: float
+) -> Iterator[str]:
     payload: dict = {
         "model": model,
         "max_tokens": 2000,
@@ -174,7 +207,7 @@ def _anthropic(messages: list[dict], model: str, system: str, key: str, think: b
         payload["thinking"] = {"type": "enabled", "budget_tokens": 4000}
 
     headers = {"x-api-key": key, "anthropic-version": "2023-06-01"}
-    for line in _post_stream("https://api.anthropic.com/v1/messages", payload, headers):
+    for line in _post_stream("https://api.anthropic.com/v1/messages", payload, headers, read_timeout):
         text = line.decode("utf-8", "replace").strip()
         if not text.startswith("data:"):
             continue
@@ -188,7 +221,9 @@ def _anthropic(messages: list[dict], model: str, system: str, key: str, think: b
                 yield piece
 
 
-def _gemini(messages: list[dict], model: str, system: str, key: str, think: bool) -> Iterator[str]:
+def _gemini(
+    messages: list[dict], model: str, system: str, key: str, think: bool, read_timeout: float
+) -> Iterator[str]:
     contents = [
         {"role": "model" if m["role"] == "assistant" else "user", "parts": [{"text": m["content"]}]}
         for m in messages
@@ -205,7 +240,7 @@ def _gemini(messages: list[dict], model: str, system: str, key: str, think: bool
         f"https://generativelanguage.googleapis.com/v1beta/models/{model}"
         ":streamGenerateContent?alt=sse"
     )
-    for line in _post_stream(url, payload, {"x-goog-api-key": key}):
+    for line in _post_stream(url, payload, {"x-goog-api-key": key}, read_timeout):
         text = line.decode("utf-8", "replace").strip()
         if not text.startswith("data:"):
             continue
@@ -238,17 +273,18 @@ def stream_tokens(messages: list[dict], *, system: str = "", role: str = "chat")
         raise LLMError(f"{spec['label']} 의 API 키가 설정되어 있지 않습니다. 관리자에서 입력해 주세요.")
 
     think = role in THINKING_ROLES
+    read_timeout = READ_TIMEOUT_CHAT if role == "chat" else READ_TIMEOUT
 
     if provider == "local":
-        yield from _ollama(messages, model, system)
+        yield from _ollama(messages, model, system, read_timeout)
     elif provider == "openai":
-        yield from _openai_compatible(messages, model, system, "https://api.openai.com/v1", key)
+        yield from _openai_compatible(messages, model, system, "https://api.openai.com/v1", key, read_timeout)
     elif provider == "grok":
-        yield from _openai_compatible(messages, model, system, spec["base_url"], key)
+        yield from _openai_compatible(messages, model, system, spec["base_url"], key, read_timeout)
     elif provider == "anthropic":
-        yield from _anthropic(messages, model, system, key, think)
+        yield from _anthropic(messages, model, system, key, think, read_timeout)
     elif provider == "gemini":
-        yield from _gemini(messages, model, system, key, think)
+        yield from _gemini(messages, model, system, key, think, read_timeout)
     else:
         raise LLMError(f"지원하지 않는 제공자입니다: {provider}")
 
