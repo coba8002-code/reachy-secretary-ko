@@ -43,8 +43,10 @@ PROVIDERS: dict[str, dict[str, Any]] = {
         "label": "Gemini",
         "needs_key": True,
         "key_env": "GEMINI_API_KEY",
-        "default_model": "gemini-2.0-flash",
+        "default_model": "gemini-3.6-flash",
         "note": "Live API 로 실시간 음성이 가능합니다.",
+        # 모델명은 구글이 예고 없이 내린다. 404 가 나면 관리자 화면에서
+        # 모델을 바꾸거나 https://ai.google.dev/gemini-api/docs/models 확인.
     },
     "grok": {
         "label": "Grok (xAI)",
