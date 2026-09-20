@@ -133,6 +133,16 @@ def play_emotion(name: str) -> None:
     _request("POST", f"/api/move/play/recorded-move-dataset/{dataset}/{urllib.parse.quote(name)}")
 
 
+def release_media() -> None:
+    """Hand the camera and speakers back to the system for a moment."""
+    _request("POST", "/api/media/release", data=b"", headers={"Content-Type": "application/json"})
+
+
+def acquire_media() -> None:
+    """Take the camera and speakers back."""
+    _request("POST", "/api/media/acquire", data=b"", headers={"Content-Type": "application/json"})
+
+
 def list_moves() -> list[str]:
     """Return every recorded move the robot can play."""
     dataset = urllib.parse.quote(EMOTION_DATASET, safe="")

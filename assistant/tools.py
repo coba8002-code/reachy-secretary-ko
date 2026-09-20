@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import logging
 import sys
+import time
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
@@ -26,6 +27,13 @@ sys.path.insert(0, str(ROOT / "external_tools"))
 import robot  # noqa: E402
 
 logger = logging.getLogger(__name__)
+
+# Dancing back to back overloaded a head actuator during testing - stewart_5
+# logged an Overload Error every second until the daemon restarted, while the
+# other five motors logged none. The robot recovered, but the motor needs to
+# rest between routines, and the model has no sense of that on its own.
+DANCE_REST_SECONDS = 25.0
+_last_dance = 0.0
 
 # Moves whose names are not feelings. Offering "dance1" as an emotion invites the
 # model to dance when it meant to look pleased.
@@ -71,10 +79,18 @@ def _build_movement(tools: list[Tool]) -> None:
         import random
 
         def dance(**kwargs: Any) -> dict:
+            global _last_dance
+            waited = time.time() - _last_dance
+            if waited < DANCE_REST_SECONDS:
+                return {
+                    "error": "방금 췄습니다. 모터가 식을 때까지 잠깐 쉬어야 합니다.",
+                    "retry_after_seconds": round(DANCE_REST_SECONDS - waited),
+                }
             pick = kwargs.get("which") or random.choice(dances)
             if pick not in dances:
                 pick = random.choice(dances)
             robot.play_emotion(pick)
+            _last_dance = time.time()
             return {"danced": pick, "say": "춤을 춥니다."}
 
         tools.append(Tool(

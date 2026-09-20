@@ -10,6 +10,7 @@ Providers: local (Ollama), openai, anthropic, gemini, grok.
 
 from __future__ import annotations
 
+import base64
 import http.client
 import json
 import re
@@ -265,8 +266,8 @@ def _gemini(
     tools: list[dict] | None = None,
 ) -> Iterator[dict]:
     # A message normally carries plain text, but a tool round trip needs richer
-    # parts - the model's functionCall and our functionResponse - so a caller may
-    # supply "parts" directly instead.
+    # parts - the model's functionCall and our functionResponse, or an image the
+    # robot just took - so a caller may supply "parts" directly instead.
     contents = [
         {
             "role": "model" if m["role"] == "assistant" else "user",
@@ -372,6 +373,11 @@ def stream_tokens(
     for event in stream_events(messages, system=system, role=role, schema=schema):
         if "text" in event:
             yield event["text"]
+
+
+def image_part(jpeg: bytes) -> dict:
+    """Wrap a JPEG so it can be put in a message's parts."""
+    return {"inlineData": {"mimeType": "image/jpeg", "data": base64.b64encode(jpeg).decode()}}
 
 
 def take_sentence(buffer: str) -> tuple[str, str]:
