@@ -125,7 +125,11 @@ class Handler(BaseHTTPRequestHandler):
         if self.path == "/api/settings":
             settings = config.load()
             settings.pop("keys", None)  # never hand real keys back to the page
-            self._send({"settings": settings, "providers": config.status()})
+            self._send({
+                "settings": settings,
+                "providers": config.status(),
+                "roles": config.role_status(),
+            })
             return
 
         self._send({"error": "not found"}, 404)
@@ -152,6 +156,20 @@ class Handler(BaseHTTPRequestHandler):
                 return
             config.set_key(provider, payload.get("key", "").strip())
             self._send({"ok": True, "masked": config.masked_keys().get(provider, "")})
+            return
+
+        if self.path == "/api/role":
+            config.set_role(payload.get("role", ""), payload.get("provider", ""))
+            self._send({"ok": True})
+            return
+
+        if self.path == "/api/model":
+            provider = payload.get("provider", "")
+            if provider not in config.PROVIDERS:
+                self._send({"error": "알 수 없는 제공자"}, 400)
+                return
+            config.set_model(provider, payload.get("model", "").strip())
+            self._send({"ok": True, "model": config.model_for(provider)})
             return
 
         if self.path == "/api/test":

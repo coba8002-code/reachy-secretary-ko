@@ -58,9 +58,34 @@ PROVIDERS: dict[str, dict[str, Any]] = {
     },
 }
 
+# What each provider is used for. Keeping them separate is the point of
+# holding several keys: the model that is best at holding a conversation is not
+# the one that is best at thinking through a hard problem, and neither of them
+# transcribes Korean speech.
+ROLES: dict[str, dict[str, str]] = {
+    "chat": {
+        "label": "대화",
+        "note": "말을 주고받는 쪽. 지연이 품질을 좌우합니다.",
+    },
+    "reason": {
+        "label": "깊은 판단",
+        "note": "여러 단계를 따져야 하는 질문. 느려도 정확한 쪽이 낫습니다.",
+    },
+    "stt": {
+        "label": "음성 인식",
+        "note": "한국어 받아쓰기.",
+    },
+}
+
 DEFAULTS: dict[str, Any] = {
     "provider": "local",
     "model": "",                    # empty means the provider's default
+    # role -> provider id. Empty falls back to "provider".
+    "roles": {},
+    # provider id -> model override, set from the admin panel. Providers retire
+    # model names without warning (gemini-2.0-flash vanished mid-build), and
+    # re-deploying code to fix a string is the wrong shape of fix.
+    "models": {},
     "persona": "secretary_ko",
     "voice": "Yuna",
     "language": "ko",
@@ -129,9 +154,64 @@ def api_key(provider: str) -> str | None:
 def model_for(provider: str) -> str:
     """Return the model to use for a provider."""
     settings = load()
+    override = (settings.get("models") or {}).get(provider)
+    if override:
+        return str(override)
     if settings.get("provider") == provider and settings.get("model"):
         return str(settings["model"])
     return str(PROVIDERS.get(provider, {}).get("default_model", ""))
+
+
+def set_model(provider: str, model: str) -> None:
+    """Pin a provider to a specific model, or clear the override."""
+    settings = load()
+    models = settings.setdefault("models", {})
+    if model:
+        models[provider] = model
+    else:
+        models.pop(provider, None)
+    save(settings)
+
+
+def provider_for_role(role: str) -> str:
+    """Return the provider assigned to a role, falling back to the main one."""
+    settings = load()
+    assigned = (settings.get("roles") or {}).get(role)
+    if assigned and assigned in PROVIDERS:
+        return str(assigned)
+    return str(settings.get("provider", "local"))
+
+
+def set_role(role: str, provider: str) -> None:
+    """Assign a provider to a role, or clear the assignment."""
+    if role not in ROLES:
+        return
+    settings = load()
+    roles = settings.setdefault("roles", {})
+    if provider and provider in PROVIDERS:
+        roles[role] = provider
+    else:
+        roles.pop(role, None)
+    save(settings)
+
+
+def role_status() -> list[dict[str, Any]]:
+    """Return each role with the provider currently serving it."""
+    settings = load()
+    rows = []
+    for role, spec in ROLES.items():
+        assigned = (settings.get("roles") or {}).get(role, "")
+        effective = provider_for_role(role)
+        rows.append({
+            "id": role,
+            "label": spec["label"],
+            "note": spec["note"],
+            "assigned": assigned,
+            "effective": effective,
+            "effective_label": PROVIDERS.get(effective, {}).get("label", effective),
+            "ready": (not PROVIDERS.get(effective, {}).get("needs_key")) or bool(api_key(effective)),
+        })
+    return rows
 
 
 def masked_keys() -> dict[str, str]:

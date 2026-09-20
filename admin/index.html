@@ -61,11 +61,23 @@
   <div class="sub">두뇌와 키, 동작 방식을 여기서 설정합니다. 키는 이 기기에만 저장됩니다.</div>
 
   <section>
-    <h2>두뇌 선택</h2>
+    <h2>역할 배정</h2>
+    <p class="note" style="margin:0 0 14px">
+      제공자마다 잘하는 일이 다릅니다. 대화를 잘 이어가는 모델과
+      어려운 문제를 풀어내는 모델은 같지 않고, 둘 다 한국어 받아쓰기는 하지 않습니다.
+    </p>
+    <div id="roles"></div>
+  </section>
+
+  <section>
+    <h2>제공자와 키</h2>
     <div id="providers"></div>
     <div class="hint">
-      키는 <code id="cfgpath">설정 파일</code> 에 소유자만 읽을 수 있는 권한(0600)으로 저장되며,
-      해당 제공자 외에는 어디로도 전송되지 않습니다. 화면에는 항상 가려서 표시됩니다.
+      키는 소유자만 읽을 수 있는 권한(0600)으로 저장되며, 해당 제공자 외에는
+      어디로도 전송되지 않습니다. 화면에는 항상 가려서 표시됩니다.
+      <br><br>
+      모델 이름은 제공자가 예고 없이 내립니다. 연결 확인에서 404 가 나면
+      여기서 모델만 바꾸면 됩니다 — 코드를 고칠 필요가 없습니다.
     </div>
   </section>
 
@@ -108,12 +120,50 @@ function toast(msg) {
 async function load() {
   const r = await fetch('/api/settings');
   state = await r.json();
+  renderRoles();
   renderProviders();
   for (const k of ['owner_name','voice','output','stt_model']) {
     const el = document.getElementById(k);
     if (el && state.settings[k] != null) el.value = state.settings[k];
   }
   document.getElementById('vision_enabled').value = String(!!state.settings.vision_enabled);
+}
+
+function renderRoles() {
+  const box = document.getElementById('roles');
+  box.innerHTML = '';
+  for (const r of state.roles || []) {
+    const opts = state.providers.map(p =>
+      `<option value="${p.id}" ${r.assigned === p.id ? 'selected' : ''} ${p.ready ? '' : 'disabled'}>
+         ${p.label}${p.ready ? '' : ' (키 필요)'}
+       </option>`).join('');
+    const div = document.createElement('div');
+    div.className = 'prov';
+    div.innerHTML = `
+      <div class="prow">
+        <span class="pname">${r.label}</span>
+        <span class="badge ${r.ready ? 'ok' : ''}">${r.effective_label}</span>
+        <span style="flex:1"></span>
+        <select onchange="setRole('${r.id}', this.value)" style="max-width:220px">
+          <option value="">기본 두뇌 따라감</option>${opts}
+        </select>
+      </div>
+      <p class="note">${r.note}</p>`;
+    box.appendChild(div);
+  }
+}
+
+async function setRole(role, provider) {
+  await fetch('/api/role', {method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({role, provider})});
+  await load(); toast('역할을 바꿨습니다');
+}
+
+async function saveModel(id) {
+  const model = document.getElementById('model_' + id).value.trim();
+  await fetch('/api/model', {method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({provider: id, model})});
+  await load(); toast('모델을 저장했습니다');
 }
 
 function renderProviders() {
@@ -140,6 +190,10 @@ function renderProviders() {
         <input type="password" id="key_${p.id}" placeholder="${p.masked_key || 'API 키 입력'}">
         <button onclick="saveKey('${p.id}')">키 저장</button>
       </div>` : ''}
+      <div class="keyrow">
+        <input type="text" id="model_${p.id}" value="${p.model}" placeholder="모델 이름">
+        <button onclick="saveModel('${p.id}')">모델 저장</button>
+      </div>
       <div class="result" id="res_${p.id}"></div>`;
     box.appendChild(div);
   }
