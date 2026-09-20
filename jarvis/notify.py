@@ -32,7 +32,9 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
+import backlog  # noqa: E402
 import phrases  # noqa: E402
+import presence  # noqa: E402
 import robot  # noqa: E402
 import speech  # noqa: E402
 
@@ -46,6 +48,9 @@ COOLDOWN_SECONDS = float(os.getenv("REACHY_JARVIS_COOLDOWN", "8"))
 MAX_TASK_CHARS = int(os.getenv("REACHY_JARVIS_MAX_TASK", "40"))
 # How long to let the gesture (and its own audio) run before speaking.
 EMOTE_LEAD_SECONDS = float(os.getenv("REACHY_JARVIS_EMOTE_LEAD", "1.2"))
+# Hold announcements when nobody is at the desk, and brief on return.
+# Set to 0 to always speak, whether or not anyone is there.
+PRESENCE_AWARE = os.getenv("REACHY_JARVIS_PRESENCE", "1") not in ("0", "false", "no")
 
 BLOCKING_NOTIFICATIONS = {"permission_prompt", "elicitation_dialog"}
 DEFAULT_AGENT = "클로드"
@@ -151,6 +156,46 @@ def announce(key: str, *, agent: str = "", task: str = "") -> None:
         return
 
 
+def _deliver_backlog() -> bool:
+    """Say what was missed while the desk was empty. True if anything was said."""
+    text = backlog.summary()
+    if not text:
+        return False
+    if _emote("done"):
+        time.sleep(EMOTE_LEAD_SECONDS)
+    if speech.say(text):
+        backlog.clear()
+        return True
+    return False
+
+
+def speak_or_hold(key: str, *, agent: str = "", task: str = "") -> bool:
+    """Announce now if someone is here, otherwise hold it for their return.
+
+    Returns True only when something was actually said out loud. Callers use
+    that to decide whether the speech cooldown applies: holding an item is
+    silent, so it must not rate-limit the next one. Getting this wrong means a
+    queued approval request can be dropped entirely, which is the one failure
+    this whole feature exists to prevent.
+
+    Talking to an empty room is not just wasted - it trains you to ignore the
+    robot, because most of what it says happens when you are not listening.
+    """
+    if not PRESENCE_AWARE:
+        announce(key, agent=agent, task=task)
+        return True
+
+    if not presence.is_present():
+        backlog.add(key, agent=agent, task=task)
+        return False
+
+    # They are back. Lead with what they missed, then the new thing.
+    if _deliver_backlog():
+        time.sleep(0.6)
+    announce(key, agent=agent, task=task)
+    return True
+
+
 def _cooled_down(state: dict, now: float) -> bool:
     return now - float(state.get("last_spoken", 0)) >= COOLDOWN_SECONDS
 
@@ -187,8 +232,8 @@ def handle_event(event: dict, agent: str = DEFAULT_AGENT) -> None:
             return  # auth messages and the like are not worth speaking
         if not _cooled_down(state, now):
             return
-        announce(key, agent=agent, task=task if key == "permission" else "")
-        _mark_spoken(state, now)
+        if speak_or_hold(key, agent=agent, task=task if key == "permission" else ""):
+            _mark_spoken(state, now)
         return
 
     if name == "Stop":
@@ -201,11 +246,12 @@ def handle_event(event: dict, agent: str = DEFAULT_AGENT) -> None:
             return
 
         if event.get("stop_reason") == "max_tokens":
-            announce("truncated")
+            spoke = speak_or_hold("truncated")
         else:
-            announce("done", agent=agent, task=task)
+            spoke = speak_or_hold("done", agent=agent, task=task)
 
-        _mark_spoken(state, now)
+        if spoke:
+            _mark_spoken(state, now)
         state.setdefault("turns", {}).pop(session, None)
         _write_state(state)
 
@@ -223,8 +269,8 @@ def main() -> int:
             state = _read_state()
             now = time.time()
             if _cooled_down(state, now):
-                announce(args.event, agent=args.agent, task=shorten(args.task))
-                _mark_spoken(state, now)
+                if speak_or_hold(args.event, agent=args.agent, task=shorten(args.task)):
+                    _mark_spoken(state, now)
             return 0
 
         raw = sys.stdin.read()
